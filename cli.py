@@ -44,6 +44,27 @@ class SetupWizard:
         print("8. Exit")
         print("="*50)
     
+    def _prompt_shipping_address(self) -> dict | None:
+        """Optionally collect a shipping address to use at checkout."""
+        print("\nShipping Address:")
+        print("  Leave blank to use the default address already saved on the site.")
+        use_default = input("  Use site's default address? (yes/no, default yes): ").lower().strip()
+        if use_default != "no":
+            print("✅ Will use the site's saved default address at checkout")
+            return None
+
+        print("  Enter the shipping address to use:")
+        address = {
+            "full_name": input("    Full name: ").strip(),
+            "line1":     input("    Address line 1: ").strip(),
+            "line2":     input("    Address line 2 (optional): ").strip() or "",
+            "city":      input("    City: ").strip(),
+            "state":     input("    State/Province: ").strip(),
+            "zip_code":  input("    ZIP / Postal code: ").strip(),
+            "country":   input("    Country (default US): ").strip() or "US",
+        }
+        return address
+
     def add_account(self):
         """Interactively add a new account."""
         print("\n📝 ADD NEW ACCOUNT")
@@ -98,6 +119,8 @@ class SetupWizard:
             quantity_limit = None
             print("⚠️  Invalid quantity — no quantity limit set")
 
+        shipping_address = self._prompt_shipping_address()
+
         self.accounts = self.cred_manager.add_account(
             self.accounts,
             account_id,
@@ -109,6 +132,7 @@ class SetupWizard:
             price_limit,
             price_limit_enabled,
             quantity_limit,
+            shipping_address,
         )
         
         if self.cred_manager.save_credentials(self.accounts):
@@ -140,10 +164,13 @@ class SetupWizard:
             print(f"   Payment: {account['payment_method']}")
             qty_limit = account.get("quantity_limit_per_item")
             qty_display = f"{qty_limit} units" if qty_limit is not None else "No limit"
+            addr = account.get("shipping_address")
+            addr_display = f"{addr['line1']}, {addr['city']} {addr['state']}" if addr else "Site default"
 
             print(f"   Monthly Limit: ${monthly_limit} (Spent: ${spent:.2f})")
             print(f"   Price Per Item: ${price_limit} {limit_status}")
             print(f"   Qty Per Purchase: {qty_display}")
+            print(f"   Ship To: {addr_display}")
     
     def add_purchase_task(self):
         """Add a new purchase task."""

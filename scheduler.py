@@ -132,6 +132,40 @@ class PurchaseScheduler:
         
         return result
     
+    async def run_once(self, dry_run: bool = False):
+        """
+        Single check cycle — loads tasks, runs whatever is due, then exits.
+        Used by GitHub Actions so the workflow doesn't run forever.
+        """
+        config = self.load_config()
+        current_time = datetime.now()
+
+        logger.info(f"⏰ One-shot check at {current_time.strftime('%H:%M:%S')}")
+
+        tasks_to_run = [
+            t for t in config["tasks"]
+            if self.check_if_should_run(t, current_time)
+        ]
+
+        if not tasks_to_run:
+            logger.info("💤 No tasks due right now — exiting")
+            return
+
+        logger.info(f"🎯 Found {len(tasks_to_run)} task(s) to execute")
+
+        results = await asyncio.gather(*[
+            self.execute_task(task, dry_run=dry_run)
+            for task in tasks_to_run
+        ])
+
+        for task in tasks_to_run:
+            for config_task in config["tasks"]:
+                if config_task["id"] == task["id"]:
+                    config_task["last_run"] = task.get("last_run")
+
+        self.save_config(config)
+        logger.info(f"📊 Done: {sum(1 for r in results if r['success'])}/{len(results)} successful")
+
     async def run_scheduler(self, interval: int = 60, dry_run: bool = False):
         """
         Main scheduler loop.

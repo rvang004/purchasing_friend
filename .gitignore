@@ -2,6 +2,7 @@
 .env
 .env.local
 credentials.enc
+.master_key
 master_key.txt
 
 # Python
