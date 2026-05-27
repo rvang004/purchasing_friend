@@ -5,61 +5,170 @@
     <title>Purchasing Friend Dashboard</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
 
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    >
     <link rel="stylesheet" href="style.css">
 </head>
 
-<body class="bg-dark text-light">
-
-<nav class="navbar navbar-dark bg-black px-3">
-    <span class="navbar-brand mb-0 h1">Purchasing Friend Dashboard</span>
+<body>
+<nav class="navbar navbar-expand-lg navbar-dark bg-primary px-3">
+    <a class="navbar-brand" href="#">Purchasing Friend</a>
 </nav>
 
-<div class="container py-4">
+<div class="container-fluid py-3">
 
-    <!-- Add Task Button -->
-    <div class="text-end mb-3">
-        <button class="btn btn-success btn-lg" onclick="openTaskModal()">+ New Task</button>
-    </div>
+    <ul class="nav nav-tabs" id="mainTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="tasks-tab" data-bs-toggle="tab"
+                    data-bs-target="#tasks" type="button" role="tab">
+                Tasks
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="scheduler-tab" data-bs-toggle="tab"
+                    data-bs-target="#scheduler" type="button" role="tab">
+                Scheduler
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="logs-tab" data-bs-toggle="tab"
+                    data-bs-target="#logs" type="button" role="tab">
+                Logs
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="accounts-tab" data-bs-toggle="tab"
+                    data-bs-target="#accounts" type="button" role="tab">
+                Accounts
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="system-tab" data-bs-toggle="tab"
+                    data-bs-target="#system" type="button" role="tab">
+                System Status
+            </button>
+        </li>
+    </ul>
 
-    <!-- Task Table -->
-    <div class="card bg-secondary shadow">
-        <div class="card-body">
-            <h4 class="mb-3">Tasks</h4>
+    <div class="tab-content mt-3">
 
-            <table class="table table-dark table-striped">
-                <thead>
-                    <tr>
-                        <th>Retailer</th>
-                        <th>Product URL</th>
-                        <th>Account</th>
-                        <th>Time</th>
-                        <th>Timezone</th>
-                        <th>Qty</th>
-                        <th>Max Qty</th>
-                        <th>Max Price</th>
-                        <th>Max Spend</th>
-                        <th>Enabled</th>
-                        <th>Last Run</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody id="taskTableBody"></tbody>
-            </table>
+        <!-- TASKS TAB -->
+        <div class="tab-pane fade show active" id="tasks" role="tabpanel">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h4>Tasks</h4>
+                <button class="btn btn-success" onclick="openTaskModal()">+ New Task</button>
+            </div>
+
+            <div class="mb-2">
+                <label class="form-label me-2">Account filter:</label>
+                <select id="accountFilter" class="form-select d-inline-block w-auto"
+                        onchange="loadTasks()">
+                    <option value="">All accounts</option>
+                </select>
+            </div>
+
+            <div class="card">
+                <div class="card-body table-responsive">
+                    <table class="table table-striped align-middle">
+                        <thead>
+                        <tr>
+                            <th>Retailer</th>
+                            <th>Product</th>
+                            <th>Account</th>
+                            <th>Time</th>
+                            <th>Timezone</th>
+                            <th>Desired</th>
+                            <th>Max Qty</th>
+                            <th>Max Price</th>
+                            <th>Max Spend</th>
+                            <th>Enabled</th>
+                            <th>Last Run</th>
+                            <th>Actions</th>
+                        </tr>
+                        </thead>
+                        <tbody id="taskTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
         </div>
+
+        <!-- SCHEDULER TAB -->
+        <div class="tab-pane fade" id="scheduler" role="tabpanel">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h4>Scheduler</h4>
+                <div>
+                    <button class="btn btn-outline-success me-2" onclick="startScheduler()">Start</button>
+                    <button class="btn btn-outline-danger" onclick="stopScheduler()">Stop</button>
+                </div>
+            </div>
+
+            <div class="card mb-3">
+                <div class="card-body">
+                    <p>
+                        Status:
+                        <span id="schedulerStatusBadge" class="badge bg-secondary">Unknown</span>
+                    </p>
+                    <p>Tasks configured: <span id="schedulerTaskCount">0</span></p>
+                </div>
+            </div>
+        </div>
+
+        <!-- LOGS TAB -->
+        <div class="tab-pane fade" id="logs" role="tabpanel">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h4>Logs</h4>
+                <button class="btn btn-outline-secondary btn-sm" onclick="clearLogs()">Clear</button>
+            </div>
+            <div class="card">
+                <div class="card-body">
+                    <pre id="logConsole" class="log-console"></pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- ACCOUNTS TAB -->
+        <div class="tab-pane fade" id="accounts" role="tabpanel">
+            <h4 class="mb-3">Accounts</h4>
+            <div class="card">
+                <div class="card-body">
+                    <table class="table table-striped align-middle">
+                        <thead>
+                        <tr>
+                            <th>Label</th>
+                            <th>Email</th>
+                        </tr>
+                        </thead>
+                        <tbody id="accountsTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- SYSTEM STATUS TAB -->
+        <div class="tab-pane fade" id="system" role="tabpanel">
+            <h4 class="mb-3">System Status</h4>
+            <div class="card">
+                <div class="card-body">
+                    <p>Scheduler: <span id="systemSchedulerBadge" class="badge bg-secondary">Unknown</span></p>
+                    <p>Tasks: <span id="systemTaskCount">0</span></p>
+                    <p>Accounts: <span id="systemAccountCount">0</span></p>
+                </div>
+            </div>
+        </div>
+
     </div>
 </div>
 
-<!-- Task Modal -->
+<!-- TASK MODAL -->
 <div class="modal fade" id="taskModal" tabindex="-1">
   <div class="modal-dialog modal-xl">
-    <div class="modal-content bg-dark text-light">
-
+    <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title">Task Editor</h5>
-        <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        <button class="btn-close" data-bs-dismiss="modal"></button>
       </div>
-
       <div class="modal-body">
 
         <input type="hidden" id="taskId">
@@ -67,65 +176,58 @@
         <div class="row">
             <div class="col-md-4 mb-3">
                 <label class="form-label">Retailer</label>
-                <select class="form-control" id="retailer">
+                <select class="form-select" id="retailer">
                     <option>Walmart</option>
                     <option>Sam's</option>
                     <option>Target</option>
                 </select>
             </div>
-
             <div class="col-md-8 mb-3">
                 <label class="form-label">Product URL</label>
                 <input class="form-control" id="productUrl">
             </div>
         </div>
 
-        <h5 class="mt-4">Account Info</h5>
+        <h5 class="mt-3">Account Info</h5>
         <div class="row">
             <div class="col-md-4 mb-3">
                 <label class="form-label">Account Label</label>
                 <input class="form-control" id="accountLabel">
             </div>
-
             <div class="col-md-4 mb-3">
                 <label class="form-label">Login Email</label>
                 <input class="form-control" id="loginEmail">
             </div>
-
             <div class="col-md-4 mb-3">
                 <label class="form-label">Login Password</label>
                 <input type="password" class="form-control" id="loginPassword">
             </div>
         </div>
 
-        <h5 class="mt-4">Schedule</h5>
+        <h5 class="mt-3">Schedule</h5>
         <div class="row">
             <div class="col-md-2 mb-3">
                 <label class="form-label">Hour</label>
                 <input type="number" class="form-control" id="hour" min="1" max="12">
             </div>
-
             <div class="col-md-2 mb-3">
                 <label class="form-label">Minute</label>
                 <input type="number" class="form-control" id="minute" min="0" max="59">
             </div>
-
             <div class="col-md-2 mb-3">
                 <label class="form-label">Second</label>
                 <input type="number" class="form-control" id="second" min="0" max="59">
             </div>
-
             <div class="col-md-2 mb-3">
                 <label class="form-label">AM/PM</label>
-                <select class="form-control" id="ampm">
+                <select class="form-select" id="ampm">
                     <option>AM</option>
                     <option>PM</option>
                 </select>
             </div>
-
             <div class="col-md-4 mb-3">
                 <label class="form-label">Timezone</label>
-                <select class="form-control" id="timezone">
+                <select class="form-select" id="timezone">
                     <option>CST</option>
                     <option>EST</option>
                     <option>PST</option>
@@ -134,23 +236,20 @@
             </div>
         </div>
 
-        <h5 class="mt-4">Limits</h5>
+        <h5 class="mt-3">Limits</h5>
         <div class="row">
             <div class="col-md-3 mb-3">
                 <label class="form-label">Desired Quantity</label>
                 <input type="number" class="form-control" id="desiredQty">
             </div>
-
             <div class="col-md-3 mb-3">
                 <label class="form-label">Max Quantity</label>
                 <input type="number" class="form-control" id="maxQty">
             </div>
-
             <div class="col-md-3 mb-3">
                 <label class="form-label">Max Price</label>
                 <input type="number" class="form-control" id="maxPrice" step="0.01">
             </div>
-
             <div class="col-md-3 mb-3">
                 <label class="form-label">Max Spend</label>
                 <input type="number" class="form-control" id="maxSpend" step="0.01">
@@ -159,12 +258,23 @@
 
         <div class="mb-3">
             <label class="form-label">Enabled</label>
-            <select class="form-control" id="enabled">
+            <select class="form-select" id="enabled">
                 <option value="true">Yes</option>
                 <option value="false">No</option>
             </select>
         </div>
 
       </div>
-
       <div class="modal-footer">
+        <button class="btn btn-success" onclick="saveTask()">Save Task</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script
+  src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js">
+</script>
+<script src="script.js"></script>
+</body>
+</html>
