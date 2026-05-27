@@ -93,4 +93,10 @@ class PurchaseScheduler:
                 # ---- RESPONSIVE SLEEP ----
                 for _ in range(interval):
                     if stop_event and stop_event.is_set():
-                        logger.info("🛑
+                        logger.info("🛑 Stop requested during sleep — exiting scheduler loop")
+                        return
+                    await asyncio.sleep(1)
+
+        except Exception as e:
+            logger.error(f"❌ Scheduler error: {e}")
+            raise

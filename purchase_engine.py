@@ -120,10 +120,16 @@ class PurchaseEngine:
             logger.error(f"❌ Error getting price: {e}")
             return None
     
-    async def set_quantity(self, quantity: int) -> bool:
-        """Set item quantity on product page (generic selector)."""
+    async def set_quantity(self, quantity: int) -> int:
+        """
+        Set item quantity on product page.
+
+        Returns the actual quantity accepted by the site — may be lower than
+        requested if stock is limited. The purchase always proceeds with
+        whatever the site allows.
+        """
         if quantity <= 1:
-            return True  # default is usually 1, nothing to do
+            return 1
         try:
             qty_selectors = [
                 'select[name*="quantity" i]',
@@ -140,43 +146,213 @@ class PurchaseEngine:
                     else:
                         await element.triple_click()
                         await element.type(str(quantity))
-                    logger.info(f"🔢 Quantity set to {quantity}")
-                    return True
+
+                    # Read back what the site actually accepted
+                    actual = await element.evaluate("el => el.value")
+                    try:
+                        actual_qty = int(actual)
+                    except (ValueError, TypeError):
+                        actual_qty = quantity
+
+                    if actual_qty < quantity:
+                        logger.warning(
+                            f"⚠️  Requested {quantity} but site only allows {actual_qty} "
+                            f"(stock limited) — proceeding with {actual_qty}"
+                        )
+                    else:
+                        logger.info(f"🔢 Quantity set to {actual_qty}")
+                    return actual_qty
+
             logger.warning("⚠️  Could not find quantity input — defaulting to 1")
-            return False
+            return 1
         except Exception as e:
             logger.error(f"❌ Failed to set quantity: {e}")
-            return False
+            return 1
 
     async def add_to_cart(self) -> bool:
-        """Add item to cart (generic selector)."""
+        """Add item to cart and dismiss any mini-cart popup that appears."""
         try:
-            # Try common selectors for "Add to Cart" button
             selectors = [
                 'button:has-text("Add to Cart")',
                 'button:has-text("Add to cart")',
+                'button:has-text("Add to Basket")',
                 'button[class*="add-to-cart" i]',
                 '[class*="add-to-cart" i]',
             ]
-            
+
             for selector in selectors:
                 btn = await self.page.query_selector(selector)
                 if btn:
                     if self.dry_run:
                         logger.info("🔄 DRY RUN: Would click 'Add to Cart'")
                         return True
-                    
                     await btn.click()
-                    await self.page.wait_for_timeout(1000)
+                    await self.page.wait_for_timeout(1500)
+
+                    # Dismiss any "continue shopping" overlay so we aren't blocked
+                    dismiss_selectors = [
+                        'button:has-text("Continue shopping")',
+                        'button:has-text("Continue Shopping")',
+                        'button:has-text("No thanks")',
+                        'button:has-text("No Thanks")',
+                        '[aria-label*="close" i]',
+                        '[class*="modal" i] [class*="close" i]',
+                    ]
+                    for d_sel in dismiss_selectors:
+                        d_btn = await self.page.query_selector(d_sel)
+                        if d_btn:
+                            await d_btn.click()
+                            await self.page.wait_for_timeout(500)
+                            break
+
                     logger.info("✅ Item added to cart")
                     return True
-            
+
             logger.warning("⚠️  Could not find 'Add to Cart' button")
             return False
         except Exception as e:
             logger.error(f"❌ Failed to add to cart: {e}")
             return False
+
+    async def navigate_to_cart(self) -> bool:
+        """
+        Land on the cart page before attempting checkout.
+
+        First tries mini-cart "Go to Cart" links, then falls back to
+        common cart URL patterns so the checkout button is always reachable.
+        """
+        try:
+            # Mini-cart / confirmation popup links
+            cart_link_selectors = [
+                'a:has-text("Go to Cart")',
+                'a:has-text("View Cart")',
+                'a:has-text("View cart")',
+                'button:has-text("Go to Cart")',
+                'button:has-text("View Cart")',
+                '[class*="cart" i] a[href*="cart" i]',
+            ]
+            for sel in cart_link_selectors:
+                link = await self.page.query_selector(sel)
+                if link:
+                    await link.click()
+                    await self.page.wait_for_load_state("networkidle")
+                    logger.info("🛒 Navigated to cart via mini-cart link")
+                    return True
+
+            # Fall back: derive cart URL from current site
+            current_url = self.page.url
+            cart_paths = ["/cart", "/basket", "/bag", "/checkout/cart"]
+            import urllib.parse
+            parsed = urllib.parse.urlparse(current_url)
+            base = f"{parsed.scheme}://{parsed.netloc}"
+
+            for path in cart_paths:
+                cart_url = base + path
+                try:
+                    resp = await self.page.goto(cart_url, wait_until="networkidle")
+                    if resp and resp.ok:
+                        logger.info(f"🛒 Navigated to cart via {cart_url}")
+                        return True
+                except Exception:
+                    continue
+
+            logger.warning("⚠️  Could not navigate to cart page")
+            return False
+        except Exception as e:
+            logger.error(f"❌ Failed to navigate to cart: {e}")
+            return False
     
+    async def select_shipping_address(self, address: dict = None) -> bool:
+        """
+        Confirm the shipping address at checkout.
+
+        If `address` is None: click the default/first saved address on the page.
+        If `address` has data: fill in the address form fields.
+        """
+        try:
+            # --- Case 1: site has saved addresses, click the default one ---
+            saved_address_selectors = [
+                'input[type="radio"][name*="address" i]:first-of-type',
+                '[class*="address-book" i] input[type="radio"]:first-of-type',
+            ]
+            confirm_selectors = [
+                'button:has-text("Deliver to this address")',
+                'button:has-text("Use this address")',
+                'button:has-text("Ship to this address")',
+                'button:has-text("Deliver here")',
+                '[class*="ship-to" i] button',
+                '[class*="address" i] button[type="submit"]',
+            ]
+
+            for sel in confirm_selectors:
+                btn = await self.page.query_selector(sel)
+                if btn:
+                    if self.dry_run:
+                        logger.info("🔄 DRY RUN: Would confirm default shipping address")
+                        return True
+                    await btn.click()
+                    await self.page.wait_for_load_state("networkidle")
+                    logger.info("✅ Default shipping address confirmed")
+                    return True
+
+            # Try selecting the first radio option then confirming
+            for sel in saved_address_selectors:
+                radio = await self.page.query_selector(sel)
+                if radio:
+                    await radio.click()
+                    for confirm_sel in confirm_selectors:
+                        btn = await self.page.query_selector(confirm_sel)
+                        if btn:
+                            if self.dry_run:
+                                logger.info("🔄 DRY RUN: Would confirm saved address")
+                                return True
+                            await btn.click()
+                            await self.page.wait_for_load_state("networkidle")
+                            logger.info("✅ Saved address selected and confirmed")
+                            return True
+
+            # --- Case 2: no saved address found, fill in form fields ---
+            if address:
+                field_map = [
+                    ('input[name*="fullName" i], input[name*="full_name" i], input[name*="name" i]',
+                     address.get("full_name", "")),
+                    ('input[name*="address1" i], input[name*="line1" i], input[id*="addressLine1" i]',
+                     address.get("line1", "")),
+                    ('input[name*="address2" i], input[name*="line2" i], input[id*="addressLine2" i]',
+                     address.get("line2", "")),
+                    ('input[name*="city" i], input[id*="city" i]',
+                     address.get("city", "")),
+                    ('input[name*="state" i], select[name*="state" i]',
+                     address.get("state", "")),
+                    ('input[name*="zip" i], input[name*="postal" i], input[id*="zipCode" i]',
+                     address.get("zip_code", "")),
+                ]
+                filled = 0
+                for selector, value in field_map:
+                    if not value:
+                        continue
+                    el = await self.page.query_selector(selector)
+                    if el:
+                        tag = await el.evaluate("el => el.tagName.toLowerCase()")
+                        if tag == "select":
+                            await el.select_option(value)
+                        else:
+                            await el.triple_click()
+                            await el.type(value)
+                        filled += 1
+
+                if filled:
+                    logger.info(f"✅ Filled {filled} address field(s) from stored address")
+                    return True
+
+            # Nothing matched — site likely auto-applies the default, proceed
+            logger.info("ℹ️  No address picker found — site will use its saved default")
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ Error selecting shipping address: {e}")
+            return False
+
     async def checkout(self) -> bool:
         """Proceed to checkout."""
         try:
@@ -255,17 +431,17 @@ class PurchaseEngine:
                 result["error"] = "Failed to navigate to product"
                 return result
 
-            # Set quantity before adding to cart
-            await self.set_quantity(quantity)
-            
+            # Set quantity — returns actual qty site accepted (may be < requested if low stock)
+            actual_quantity = await self.set_quantity(quantity)
+            result["quantity"] = actual_quantity
+
             # Get item price and check against limit
             item_price = await self.get_item_price()
             result["item_price"] = item_price
-            
-            # Check if price limit is enabled
+
             price_limit_enabled = account.get("price_limit_enabled", True)
             price_limit = account.get("price_limit_per_item")
-            
+
             if price_limit_enabled and price_limit and item_price:
                 if item_price > price_limit:
                     result["error"] = f"Item price (${item_price}) exceeds limit (${price_limit})"
@@ -275,24 +451,35 @@ class PurchaseEngine:
                 logger.warning("⚠️  Could not detect price, proceeding with caution")
             elif not price_limit_enabled:
                 logger.info("🔓 Price limit disabled for this account, skipping price check")
-            
-            # Add to cart
+
+            # Add to cart (handles mini-cart popups automatically)
             if not await self.add_to_cart():
                 result["error"] = "Failed to add to cart"
                 return result
-            
+
+            # Navigate to cart page so the checkout button is reachable
+            if not await self.navigate_to_cart():
+                result["error"] = "Failed to reach cart page"
+                return result
+
             # Checkout
             if not await self.checkout():
                 result["error"] = "Checkout failed"
                 return result
-            
+
+            # Select / confirm shipping address
+            await self.select_shipping_address(account.get("shipping_address"))
+
             # Complete purchase
             if not await self.complete_purchase():
                 result["error"] = "Failed to complete purchase"
                 return result
-            
+
             result["success"] = True
-            logger.info(f"🎉 Purchase successful for {account.get('id')} (${item_price})")
+            logger.info(
+                f"🎉 Purchase successful for {account.get('id')} — "
+                f"qty: {actual_quantity}, price: ${item_price}"
+            )
             
         except Exception as e:
             result["error"] = str(e)

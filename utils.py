@@ -66,7 +66,8 @@ class CredentialManager:
                     email: str, password: str, payment_method: str,
                     monthly_limit: float, price_limit_per_item: float,
                     price_limit_enabled: bool = True,
-                    quantity_limit_per_item: int = None) -> dict:
+                    quantity_limit_per_item: int = None,
+                    shipping_address: dict = None) -> dict:
         """Add a new account securely."""
         accounts[account_id] = {
             "site": site,
@@ -77,6 +78,7 @@ class CredentialManager:
             "price_limit_per_item": price_limit_per_item,
             "price_limit_enabled": price_limit_enabled,
             "quantity_limit_per_item": quantity_limit_per_item,
+            "shipping_address": shipping_address,
             "spent_this_month": 0.0
         }
         return accounts

@@ -38,6 +38,11 @@ Examples:
         help="Start the scheduler"
     )
     run_parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Run one check cycle and exit (used by GitHub Actions)"
+    )
+    run_parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Simulate purchases without completing them"
@@ -70,10 +75,13 @@ Examples:
         
         # Run scheduler
         try:
-            asyncio.run(scheduler.run_scheduler(
-                interval=args.interval,
-                dry_run=args.dry_run
-            ))
+            if args.once:
+                asyncio.run(scheduler.run_once(dry_run=args.dry_run))
+            else:
+                asyncio.run(scheduler.run_scheduler(
+                    interval=args.interval,
+                    dry_run=args.dry_run
+                ))
         except KeyboardInterrupt:
             print("\n👋 Shutting down...")
             sys.exit(0)
