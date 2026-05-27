@@ -3,8 +3,6 @@ const API_URL = "https://purchasingfriend-production.up.railway.app";
 // Load tasks on startup
 document.addEventListener("DOMContentLoaded", () => {
     loadTasks();
-    loadSchedulerStatus();
-    loadLogs();
 });
 
 // ---------------- TASKS ----------------
@@ -21,12 +19,18 @@ async function loadTasks() {
             <tr>
                 <td>${task.retailer}</td>
                 <td><a href="${task.product_url}" target="_blank">Link</a></td>
-                <td>${task.account_email}</td>
-                <td>${task.schedule_time}</td>
+                <td>${task.account_label}</td>
+                <td>${task.hour}:${task.minute}:${task.second} ${task.ampm}</td>
+                <td>${task.timezone}</td>
+                <td>${task.desired_quantity}</td>
+                <td>${task.max_quantity}</td>
+                <td>${task.max_price}</td>
+                <td>${task.max_spend}</td>
                 <td>${task.enabled ? "Yes" : "No"}</td>
+                <td>${task.last_run || "Never"}</td>
                 <td>
-                    <button class="btn btn-sm btn-warning" onclick='editTask(${JSON.stringify(task)})'>Edit</button>
-                    <button class="btn btn-sm btn-danger" onclick="deleteTask('${task.id}')">Delete</button>
+                    <button class="btn btn-warning btn-sm" onclick='editTask(${JSON.stringify(task)})'>Edit</button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteTask('${task.id}')">Delete</button>
                 </td>
             </tr>
         `;
@@ -35,23 +39,34 @@ async function loadTasks() {
 
 function openTaskModal() {
     document.getElementById("taskId").value = "";
-    document.getElementById("retailer").value = "";
-    document.getElementById("productUrl").value = "";
-    document.getElementById("accountEmail").value = "";
-    document.getElementById("scheduleTime").value = "";
-    document.getElementById("maxQty").value = "";
-    document.getElementById("enabled").value = "true";
+    [
+        "retailer","productUrl","accountLabel","loginEmail","loginPassword",
+        "hour","minute","second","ampm","timezone",
+        "desiredQty","maxQty","maxPrice","maxSpend","enabled"
+    ].forEach(id => document.getElementById(id).value = "");
 
     new bootstrap.Modal(document.getElementById("taskModal")).show();
 }
 
 function editTask(task) {
     document.getElementById("taskId").value = task.id;
+
     document.getElementById("retailer").value = task.retailer;
     document.getElementById("productUrl").value = task.product_url;
-    document.getElementById("accountEmail").value = task.account_email;
-    document.getElementById("scheduleTime").value = task.schedule_time;
+    document.getElementById("accountLabel").value = task.account_label;
+    document.getElementById("loginEmail").value = task.login_email;
+    document.getElementById("loginPassword").value = task.login_password;
+
+    document.getElementById("hour").value = task.hour;
+    document.getElementById("minute").value = task.minute;
+    document.getElementById("second").value = task.second;
+    document.getElementById("ampm").value = task.ampm;
+    document.getElementById("timezone").value = task.timezone;
+
+    document.getElementById("desiredQty").value = task.desired_quantity;
     document.getElementById("maxQty").value = task.max_quantity;
+    document.getElementById("maxPrice").value = task.max_price;
+    document.getElementById("maxSpend").value = task.max_spend;
     document.getElementById("enabled").value = task.enabled;
 
     new bootstrap.Modal(document.getElementById("taskModal")).show();
@@ -63,17 +78,28 @@ async function saveTask() {
     const payload = {
         retailer: document.getElementById("retailer").value,
         product_url: document.getElementById("productUrl").value,
-        account_email: document.getElementById("accountEmail").value,
-        schedule_time: document.getElementById("scheduleTime").value,
+        account_label: document.getElementById("accountLabel").value,
+        login_email: document.getElementById("loginEmail").value,
+        login_password: document.getElementById("loginPassword").value,
+
+        hour: parseInt(document.getElementById("hour").value),
+        minute: parseInt(document.getElementById("minute").value),
+        second: parseInt(document.getElementById("second").value),
+        ampm: document.getElementById("ampm").value,
+        timezone: document.getElementById("timezone").value,
+
+        desired_quantity: parseInt(document.getElementById("desiredQty").value),
         max_quantity: parseInt(document.getElementById("maxQty").value),
+        max_price: parseFloat(document.getElementById("maxPrice").value),
+        max_spend: parseFloat(document.getElementById("maxSpend").value),
+
         enabled: document.getElementById("enabled").value === "true"
     };
 
-    const method = id ? "PUT" : "POST";
-    const url = id ? `${API_URL}/tasks/${id}` : `${API_URL}/tasks`;
+    const url = id ? `${API_URL}/tasks/update?task_id=${id}` : `${API_URL}/tasks/add`;
 
     await fetch(url, {
-        method,
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
     });
@@ -83,34 +109,6 @@ async function saveTask() {
 }
 
 async function deleteTask(id) {
-    await fetch(`${API_URL}/tasks/${id}`, { method: "DELETE" });
+    await fetch(`${API_URL}/tasks/delete?task_id=${id}`, { method: "POST" });
     loadTasks();
-}
-
-// ---------------- SCHEDULER ----------------
-
-async function loadSchedulerStatus() {
-    const res = await fetch(`${API_URL}/scheduler/status`);
-    const data = await res.json();
-
-    document.getElementById("schedulerStatus").innerText = data.running ? "Running" : "Stopped";
-    document.getElementById("nextRun").innerText = data.next_run || "N/A";
-}
-
-async function startScheduler() {
-    await fetch(`${API_URL}/scheduler/start`, { method: "POST" });
-    loadSchedulerStatus();
-}
-
-async function stopScheduler() {
-    await fetch(`${API_URL}/scheduler/stop`, { method: "POST" });
-    loadSchedulerStatus();
-}
-
-// ---------------- LOGS ----------------
-
-async function loadLogs() {
-    const res = await fetch(`${API_URL}/logs`);
-    const text = await res.text();
-    document.getElementById("logOutput").innerText = text;
 }
