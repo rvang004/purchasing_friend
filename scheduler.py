@@ -1,102 +1,120 @@
 import asyncio
+import json
 import logging
 from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from crypto_utils import decrypt_password
+from automation import walmart, sams, target
 
 logger = logging.getLogger(__name__)
 
-class PurchaseScheduler:
-    """
-    Scheduler class that manages timed purchase tasks.
-    """
+CONFIG_PATH = Path(__file__).parent / "tasks_config.json"
 
+
+class PurchaseScheduler:
+
+    # -------------------------------
+    # Load/save config
+    # -------------------------------
     def load_config(self):
-        """
-        Load your config file here.
-        Replace this placeholder with your real implementation.
-        """
-        raise NotImplementedError("load_config() must be implemented")
+        if not CONFIG_PATH.exists():
+            return {"tasks": []}
+        return json.loads(CONFIG_PATH.read_text())
 
     def save_config(self, config):
-        """
-        Save updated config here.
-        Replace this placeholder with your real implementation.
-        """
-        raise NotImplementedError("save_config() must be implemented")
+        CONFIG_PATH.write_text(json.dumps(config, indent=2))
 
-    def check_if_should_run(self, task, current_time):
-        """
-        Determine if a task should run at the current time.
-        Replace this placeholder with your real implementation.
-        """
-        raise NotImplementedError("check_if_should_run() must be implemented")
+    # -------------------------------
+    # Time check
+    # -------------------------------
+    def check_if_should_run(self, task, now_local):
+        if not task.get("enabled", True):
+            return False
 
-    async def execute_task(self, task, dry_run=False):
-        """
-        Execute a single task.
-        Replace this placeholder with your real implementation.
-        """
-        raise NotImplementedError("execute_task() must be implemented")
+        sched = task["schedule"]
+        hour = sched["hour"]
+        minute = sched["minute"]
+        second = sched["second"]
+        ampm = sched["ampm"]
 
-    # ---------------------------------------------------------
-    # YOUR METHOD — inserted exactly as you provided it
-    # ---------------------------------------------------------
-    async def run_scheduler(self, interval: int = 60, dry_run: bool = False, stop_event=None):
-        """
-        Main scheduler loop with clean stop support.
+        # Convert AM/PM to 24h
+        if ampm == "PM" and hour != 12:
+            hour += 12
+        if ampm == "AM" and hour == 12:
+            hour = 0
 
-        Args:
-            interval: Check interval in seconds
-            dry_run: If True, simulate purchases without completing them
-            stop_event: asyncio.Event() used to request a clean stop
-        """
-        logger.info("🤖 Purchase scheduler started")
+        # Compare time
+        if not (now_local.hour == hour and now_local.minute == minute):
+            return False
 
-        try:
-            while True:
+        # Prevent double-run
+        last = task.get("last_run")
+        if last:
+            last_dt = datetime.fromisoformat(last)
+            if last_dt.year == now_local.year and last_dt.month == now_local.month and \
+               last_dt.day == now_local.day and last_dt.hour == now_local.hour and \
+               last_dt.minute == now_local.minute:
+                return False
 
-                # ---- STOP CHECK ----
-                if stop_event and stop_event.is_set():
-                    logger.info("🛑 Stop requested — exiting scheduler loop")
-                    break
+        return True
 
-                config = self.load_config()
-                current_time = datetime.now()
+    # -------------------------------
+    # Main scheduler loop
+    # -------------------------------
+    async def run_scheduler(self, interval=60, dry_run=False):
+        logger.info("Scheduler started")
 
-                logger.info(f"⏰ Checking tasks at {current_time.strftime('%H:%M:%S')}")
+        while True:
+            config = self.load_config()
+            tasks = config["tasks"]
 
-                tasks_to_run = [
-                    t for t in config["tasks"]
-                    if self.check_if_should_run(t, current_time)
-                ]
+            for task in tasks:
+                tz = ZoneInfo(self._tz_to_zone(task["schedule"]["timezone"]))
+                now_local = datetime.now(tz)
 
-                if tasks_to_run:
-                    logger.info(f"🎯 Found {len(tasks_to_run)} task(s) to execute")
+                if self.check_if_should_run(task, now_local):
+                    asyncio.create_task(self.run_task(task, config, dry_run))
 
-                    # Run tasks concurrently
-                    results = await asyncio.gather(*[
-                        self.execute_task(task, dry_run=dry_run)
-                        for task in tasks_to_run
-                    ])
+            await asyncio.sleep(interval)
 
-                    # Update config with last_run times
-                    for task in tasks_to_run:
-                        for config_task in config["tasks"]:
-                            if config_task["id"] == task["id"]:
-                                config_task["last_run"] = task.get("last_run")
+    # -------------------------------
+    # Convert CST → America/Chicago
+    # -------------------------------
+    def _tz_to_zone(self, tz):
+        mapping = {
+            "CST": "America/Chicago",
+            "EST": "America/New_York",
+            "PST": "America/Los_Angeles",
+            "MST": "America/Denver"
+        }
+        return mapping.get(tz, "America/Chicago")
 
-                    self.save_config(config)
-                    logger.info(
-                        f"📊 Execution complete: "
-                        f"{sum(1 for r in results if r['success'])}/{len(results)} successful"
-                    )
+    # -------------------------------
+    # Execute a task
+    # -------------------------------
+    async def run_task(self, task, config, dry_run):
+        retailer = task["retailer"]
+        limits = task["limits"]
 
-                # ---- RESPONSIVE SLEEP ----
-                for _ in range(interval):
-                    if stop_event and stop_event.is_set():
-                        logger.info("🛑 Stop requested during sleep — exiting scheduler loop")
-                        return
-                    await asyncio.sleep(1)
+        # Decrypt password
+        password = decrypt_password(task["account"]["password_encrypted"])
 
-        except Exception as e:
-            logger.error(f"❌ Scheduler error: {e}")
-            raise
+        # Route to retailer automation
+        if retailer == "walmart":
+            result = await walmart.run(task, password, dry_run)
+        elif retailer == "sams":
+            result = await sams.run(task, password, dry_run)
+        elif retailer == "target":
+            result = await target.run(task, password, dry_run)
+        else:
+            logger.error(f"Unknown retailer: {retailer}")
+            return
+
+        # Update last_run
+        for t in config["tasks"]:
+            if t["id"] == task["id"]:
+                t["last_run"] = datetime.now().isoformat()
+
+        self.save_config(config)
