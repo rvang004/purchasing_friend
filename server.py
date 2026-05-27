@@ -16,7 +16,7 @@ import uvicorn
 from utils import CredentialManager
 
 app = FastAPI()
-templates = Jinja2Templates(directory="templates")
+templates = Jinja2Templates(directory="docs")
 cred_manager = CredentialManager()
 
 CONFIG_FILE = Path("config.json")
