@@ -1,114 +1,283 @@
-const API_URL = "https://purchasingfriend-production.up.railway.app";
+import json
+import uuid
+import webbrowser
+from datetime import datetime
+from pathlib import Path
+from typing import Optional, List
 
-// Load tasks on startup
-document.addEventListener("DOMContentLoaded", () => {
-    loadTasks();
-});
+from fastapi import FastAPI, Form, Request, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
+from apscheduler.schedulers.background import BackgroundScheduler
+import asyncio
+import uvicorn
 
-// ---------------- TASKS ----------------
+from utils import CredentialManager
 
-async function loadTasks() {
-    const res = await fetch(`${API_URL}/tasks`);
-    const tasks = await res.json();
+app = FastAPI()
+templates = Jinja2Templates(directory="templates")
+cred_manager = CredentialManager()
 
-    const tbody = document.getElementById("taskTableBody");
-    tbody.innerHTML = "";
+CONFIG_FILE = Path("config.json")
 
-    tasks.forEach(task => {
-        tbody.innerHTML += `
-            <tr>
-                <td>${task.retailer}</td>
-                <td><a href="${task.product_url}" target="_blank">Link</a></td>
-                <td>${task.account_label}</td>
-                <td>${task.hour}:${task.minute}:${task.second} ${task.ampm}</td>
-                <td>${task.timezone}</td>
-                <td>${task.desired_quantity}</td>
-                <td>${task.max_quantity}</td>
-                <td>${task.max_price}</td>
-                <td>${task.max_spend}</td>
-                <td>${task.enabled ? "Yes" : "No"}</td>
-                <td>${task.last_run || "Never"}</td>
-                <td>
-                    <button class="btn btn-warning btn-sm" onclick='editTask(${JSON.stringify(task)})'>Edit</button>
-                    <button class="btn btn-danger btn-sm" onclick="deleteTask('${task.id}')">Delete</button>
-                </td>
-            </tr>
-        `;
-    });
-}
+# ───────────────────────────────── helpers ────────────────────────────────────
 
-function openTaskModal() {
-    document.getElementById("taskId").value = "";
-    [
-        "retailer","productUrl","accountLabel","loginEmail","loginPassword",
-        "hour","minute","second","ampm","timezone",
-        "desiredQty","maxQty","maxPrice","maxSpend","enabled"
-    ].forEach(id => document.getElementById(id).value = "");
+def load_config() -> dict:
+    if not CONFIG_FILE.exists():
+        return {"accounts": [], "tasks": []}
+    with open(CONFIG_FILE, "r") as f:
+        return json.load(f)
 
-    new bootstrap.Modal(document.getElementById("taskModal")).show();
-}
 
-function editTask(task) {
-    document.getElementById("taskId").value = task.id;
+def save_config(cfg: dict):
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(cfg, f, indent=4)
 
-    document.getElementById("retailer").value = task.retailer;
-    document.getElementById("productUrl").value = task.product_url;
-    document.getElementById("accountLabel").value = task.account_label;
-    document.getElementById("loginEmail").value = task.login_email;
-    document.getElementById("loginPassword").value = task.login_password;
 
-    document.getElementById("hour").value = task.hour;
-    document.getElementById("minute").value = task.minute;
-    document.getElementById("second").value = task.second;
-    document.getElementById("ampm").value = task.ampm;
-    document.getElementById("timezone").value = task.timezone;
+# ──────────────────────────────── models ──────────────────────────────────────
 
-    document.getElementById("desiredQty").value = task.desired_quantity;
-    document.getElementById("maxQty").value = task.max_quantity;
-    document.getElementById("maxPrice").value = task.max_price;
-    document.getElementById("maxSpend").value = task.max_spend;
-    document.getElementById("enabled").value = task.enabled;
+class TaskCreate(BaseModel):
+    retailer: str
+    product_url: str
 
-    new bootstrap.Modal(document.getElementById("taskModal")).show();
-}
+    account_label: str
+    login_email: str
+    login_password: str
 
-async function saveTask() {
-    const id = document.getElementById("taskId").value;
+    hour: int
+    minute: int
+    second: int
+    ampm: str          # "AM" or "PM"
+    timezone: str      # "CST", "EST", "PST", "MST"
 
-    const payload = {
-        retailer: document.getElementById("retailer").value,
-        product_url: document.getElementById("productUrl").value,
-        account_label: document.getElementById("accountLabel").value,
-        login_email: document.getElementById("loginEmail").value,
-        login_password: document.getElementById("loginPassword").value,
+    desired_quantity: int
+    max_quantity: int
+    max_price: float
+    max_spend: float
 
-        hour: parseInt(document.getElementById("hour").value),
-        minute: parseInt(document.getElementById("minute").value),
-        second: parseInt(document.getElementById("second").value),
-        ampm: document.getElementById("ampm").value,
-        timezone: document.getElementById("timezone").value,
+    enabled: bool
 
-        desired_quantity: parseInt(document.getElementById("desiredQty").value),
-        max_quantity: parseInt(document.getElementById("maxQty").value),
-        max_price: parseFloat(document.getElementById("maxPrice").value),
-        max_spend: parseFloat(document.getElementById("maxSpend").value),
 
-        enabled: document.getElementById("enabled").value === "true"
-    };
+class Task(TaskCreate):
+    id: str
+    last_run: Optional[str] = None  # ISO string
 
-    const url = id ? `${API_URL}/tasks/update?task_id=${id}` : `${API_URL}/tasks/add`;
 
-    await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-    });
+# ──────────────────────────────── logging ─────────────────────────────────────
 
-    loadTasks();
-    bootstrap.Modal.getInstance(document.getElementById("taskModal")).hide();
-}
+log_messages: List[str] = []
 
-async function deleteTask(id) {
-    await fetch(`${API_URL}/tasks/delete?task_id=${id}`, { method: "POST" });
-    loadTasks();
-}
+
+def log(message: str):
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    entry = f"[{ts}] {message}"
+    log_messages.append(entry)
+    # keep last 500 lines
+    if len(log_messages) > 500:
+        del log_messages[0:len(log_messages) - 500]
+
+
+# ───────────────────────────── scheduler state ────────────────────────────────
+
+scheduler = BackgroundScheduler()
+scheduler.start()
+scheduler_running = False
+
+
+def _task_time_matches(now: datetime, t: dict) -> bool:
+    try:
+        hour = int(t.get("hour", 0))
+        minute = int(t.get("minute", 0))
+        second = int(t.get("second", 0))
+        ampm = t.get("ampm", "AM").upper()
+    except Exception:
+        return False
+
+    if ampm == "PM" and hour != 12:
+        hour_24 = hour + 12
+    elif ampm == "AM" and hour == 12:
+        hour_24 = 0
+    else:
+        hour_24 = hour
+
+    return (
+        now.hour == hour_24
+        and now.minute == minute
+        and now.second == second
+    )
+
+
+def run_due_tasks():
+    cfg = load_config()
+    tasks = cfg.get("tasks", [])
+    now = datetime.now()
+
+    for t in tasks:
+        if not t.get("enabled", False):
+            continue
+
+        if _task_time_matches(now, t):
+            log(f"Running task {t.get('id')} for {t.get('retailer')} {t.get('product_url')}")
+            t["last_run"] = now.isoformat()
+
+    cfg["tasks"] = tasks
+    save_config(cfg)
+
+
+def start_scheduler():
+    global scheduler_running
+    if not scheduler_running:
+        scheduler.add_job(run_due_tasks, "interval", seconds=5, id="task_runner", replace_existing=True)
+        scheduler_running = True
+        log("Scheduler started")
+
+
+def stop_scheduler():
+    global scheduler_running
+    if scheduler_running:
+        try:
+            scheduler.remove_job("task_runner")
+        except Exception:
+            pass
+        scheduler_running = False
+        log("Scheduler stopped")
+
+
+# ──────────────────────────────── routes: html ────────────────────────────────
+
+@app.get("/", response_class=HTMLResponse)
+def index(request: Request):
+    cfg = load_config()
+    return templates.TemplateResponse(
+        "index.html",
+        {"request": request, "accounts": cfg.get("accounts", [])}
+    )
+
+
+# ──────────────────────────────── routes: accounts ────────────────────────────
+
+@app.post("/accounts/add")
+def add_account(
+    label: str = Form(...),
+    email: str = Form(...),
+    password: str = Form(...)
+):
+    cfg = load_config()
+    accounts = cfg.get("accounts", [])
+
+    accounts.append({
+        "id": str(uuid.uuid4()),
+        "label": label,
+        "email": email,
+        "password": cred_manager.encrypt(password)
+    })
+
+    cfg["accounts"] = accounts
+    save_config(cfg)
+
+    return RedirectResponse("/", status_code=303)
+
+
+@app.post("/accounts/delete")
+def delete_account(account_id: str = Form(...)):
+    cfg = load_config()
+    accounts = cfg.get("accounts", [])
+    accounts = [a for a in accounts if a["id"] != account_id]
+    cfg["accounts"] = accounts
+    save_config(cfg)
+    return RedirectResponse("/", status_code=303)
+
+
+@app.post("/accounts/toggle-price-limit")
+def toggle_price_limit(account_id: str = Form(...)):
+    cfg = load_config()
+    accounts = cfg.get("accounts", [])
+
+    for acc in accounts:
+        if acc["id"] == account_id:
+            acc["price_limit_enabled"] = not acc.get("price_limit_enabled", False)
+
+    cfg["accounts"] = accounts
+    save_config(cfg)
+    return RedirectResponse("/", status_code=303)
+
+
+@app.get("/accounts/list")
+def api_accounts_list():
+    cfg = load_config()
+    return cfg.get("accounts", [])
+
+
+# ──────────────────────────────── routes: tasks api ───────────────────────────
+
+@app.get("/tasks", response_model=List[Task])
+def api_list_tasks():
+    cfg = load_config()
+    tasks = cfg.get("tasks", [])
+    result = []
+    for t in tasks:
+        try:
+            result.append(Task(**t))
+        except Exception:
+            continue
+    return result
+
+
+@app.post("/tasks/add", response_model=Task)
+def api_add_task(body: TaskCreate):
+    cfg = load_config()
+    tasks = cfg.get("tasks", [])
+
+    task_id = str(uuid.uuid4())
+    task = Task(id=task_id, last_run=None, **body.dict())
+
+    tasks.append(task.dict())
+    cfg["tasks"] = tasks
+    save_config(cfg)
+
+    log(f"Task created: {task_id} ({body.retailer})")
+    return task
+
+
+@app.post("/tasks/update", response_model=Task)
+def api_update_task(task_id: str, body: TaskCreate):
+    cfg = load_config()
+    tasks = cfg.get("tasks", [])
+
+    for i, t in enumerate(tasks):
+        if t.get("id") == task_id:
+            last_run = t.get("last_run")
+            updated = Task(id=task_id, last_run=last_run, **body.dict())
+            tasks[i] = updated.dict()
+            cfg["tasks"] = tasks
+            save_config(cfg)
+            log(f"Task updated: {task_id}")
+            return updated
+
+    raise HTTPException(status_code=404, detail="Task not found")
+
+
+@app.post("/tasks/delete")
+def api_delete_task(task_id: str):
+    cfg = load_config()
+    tasks = cfg.get("tasks", [])
+
+    tasks = [t for t in tasks if t.get("id") != task_id]
+    cfg["tasks"] = tasks
+    save_config(cfg)
+
+    log(f"Task deleted: {task_id}")
+    return {"status": "deleted"}
+
+
+# ──────────────────────────────── routes: scheduler api ───────────────────────
+
+@app.post("/scheduler/start")
+def api_scheduler_start():
+    start_scheduler()
+    return {"status": "running"}
+
+
+@app.post("/scheduler/stop")
+def api_scheduler
