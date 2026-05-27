@@ -1,162 +1,135 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
     <title>Purchasing Friend Dashboard</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        .status-running { color: green; font-weight: bold; }
-        .status-stopped { color: red; font-weight: bold; }
-        table { border-collapse: collapse; width: 100%; margin-top: 10px; }
-        th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; }
-        th { background: #f0f0f0; }
-        textarea { width: 100%; height: 200px; font-family: monospace; }
-        .btn { padding: 6px 10px; margin: 2px; cursor: pointer; }
-    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <!-- Bootstrap -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body class="bg-dark text-light">
 
-<h1>Purchasing Friend Dashboard</h1>
+<nav class="navbar navbar-dark bg-black px-3">
+    <span class="navbar-brand mb-0 h1">Purchasing Friend Dashboard</span>
+</nav>
 
-<div>
-    <button class="btn" onclick="start()">Start Scheduler</button>
-    <button class="btn" onclick="stop()">Stop Scheduler</button>
-    <span id="status" class="status-stopped">Status: Unknown</span>
+<div class="container py-4">
+
+    <!-- Tabs -->
+    <ul class="nav nav-tabs" id="dashboardTabs">
+        <li class="nav-item">
+            <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tasksTab">Tasks</button>
+        </li>
+        <li class="nav-item">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#schedulerTab">Scheduler</button>
+        </li>
+        <li class="nav-item">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#logsTab">Logs</button>
+        </li>
+    </ul>
+
+    <div class="tab-content mt-4">
+
+        <!-- TASKS TAB -->
+        <div class="tab-pane fade show active" id="tasksTab">
+            <h3>Tasks</h3>
+
+            <button class="btn btn-success mb-3" onclick="openTaskModal()">+ Add Task</button>
+
+            <table class="table table-dark table-striped">
+                <thead>
+                    <tr>
+                        <th>Retailer</th>
+                        <th>Product URL</th>
+                        <th>Account</th>
+                        <th>Schedule</th>
+                        <th>Enabled</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="taskTableBody"></tbody>
+            </table>
+        </div>
+
+        <!-- SCHEDULER TAB -->
+        <div class="tab-pane fade" id="schedulerTab">
+            <h3>Scheduler</h3>
+
+            <p><strong>Status:</strong> <span id="schedulerStatus">Loading...</span></p>
+            <p><strong>Next Run:</strong> <span id="nextRun">Loading...</span></p>
+
+            <button class="btn btn-primary" onclick="startScheduler()">Start Scheduler</button>
+            <button class="btn btn-danger" onclick="stopScheduler()">Stop Scheduler</button>
+        </div>
+
+        <!-- LOGS TAB -->
+        <div class="tab-pane fade" id="logsTab">
+            <h3>Logs</h3>
+            <pre id="logOutput" class="bg-black p-3 rounded" style="height: 400px; overflow-y: scroll;"></pre>
+        </div>
+
+    </div>
 </div>
 
-<h2>Tasks</h2>
-<div>
-    <button class="btn" onclick="showNewTaskForm()">New Task</button>
+<!-- Task Modal -->
+<div class="modal fade" id="taskModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content bg-dark text-light">
+      <div class="modal-header">
+        <h5 class="modal-title">Task</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+
+        <input type="hidden" id="taskId">
+
+        <div class="mb-3">
+            <label class="form-label">Retailer</label>
+            <input class="form-control" id="retailer">
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Product URL</label>
+            <input class="form-control" id="productUrl">
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Account Email</label>
+            <input class="form-control" id="accountEmail">
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Schedule Time (e.g. 3:00 PM CST)</label>
+            <input class="form-control" id="scheduleTime">
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Max Quantity</label>
+            <input class="form-control" id="maxQty" type="number">
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Enabled</label>
+            <select class="form-control" id="enabled">
+                <option value="true">Yes</option>
+                <option value="false">No</option>
+            </select>
+        </div>
+
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-success" onclick="saveTask()">Save</button>
+      </div>
+    </div>
+  </div>
 </div>
 
-<div id="task-form" style="display:none; margin-top:10px;">
-    <input id="task-name" placeholder="Name" />
-    <input id="task-hour" type="number" min="0" max="23" value="9" />
-    <input id="task-minute" type="number" min="0" max="59" value="0" />
-    <label>
-        <input id="task-enabled" type="checkbox" checked /> Enabled
-    </label>
-    <button class="btn" onclick="createTask()">Save</button>
-    <button class="btn" onclick="hideNewTaskForm()">Cancel</button>
-</div>
-
-<table id="tasks-table">
-    <thead>
-        <tr>
-            <th>ID</th><th>Name</th><th>Time</th><th>Enabled</th><th>Last Run</th><th>Actions</th>
-        </tr>
-    </thead>
-    <tbody></tbody>
-</table>
-
-<h2>Logs</h2>
-<textarea id="logs" readonly></textarea>
-
-<script>
-    // CHANGE THIS WHEN DEPLOYING
-    const API_URL = "https://purchasingfriend-production.up.railway.app";
-
-
-    async function start() {
-        await fetch(API + '/start', {method: 'POST'});
-        await updateStatus();
-    }
-
-    async function stop() {
-        await fetch(API + '/stop', {method: 'POST'});
-        await updateStatus();
-    }
-
-    async function updateStatus() {
-        let res = await fetch(API + '/status');
-        let data = await res.json();
-        let el = document.getElementById('status');
-        if (data.running) {
-            el.textContent = 'Status: Running';
-            el.className = 'status-running';
-        } else {
-            el.textContent = 'Status: Stopped';
-            el.className = 'status-stopped';
-        }
-    }
-
-    function showNewTaskForm() {
-        document.getElementById('task-form').style.display = 'block';
-    }
-    function hideNewTaskForm() {
-        document.getElementById('task-form').style.display = 'none';
-    }
-
-    async function loadTasks() {
-        let res = await fetch(API + '/tasks');
-        let tasks = await res.json();
-        let tbody = document.querySelector('#tasks-table tbody');
-        tbody.innerHTML = '';
-        for (let t of tasks) {
-            let tr = document.createElement('tr');
-            tr.innerHTML = `
-                <td>${t.id}</td>
-                <td>${t.name}</td>
-                <td>${String(t.hour).padStart(2,'0')}:${String(t.minute).padStart(2,'0')}</td>
-                <td>${t.enabled ? 'Yes' : 'No'}</td>
-                <td>${t.last_run || ''}</td>
-                <td>
-                    <button class="btn" onclick="toggleTask(${t.id}, ${t.enabled ? 'false' : 'true'})">
-                        ${t.enabled ? 'Disable' : 'Enable'}
-                    </button>
-                    <button class="btn" onclick="deleteTask(${t.id})">Delete</button>
-                </td>
-            `;
-            tbody.appendChild(tr);
-        }
-    }
-
-    async function createTask() {
-        let name = document.getElementById('task-name').value || 'New Task';
-        let hour = parseInt(document.getElementById('task-hour').value || '9');
-        let minute = parseInt(document.getElementById('task-minute').value || '0');
-        let enabled = document.getElementById('task-enabled').checked;
-
-        await fetch(API + '/tasks', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({name, hour, minute, enabled})
-        });
-        hideNewTaskForm();
-        await loadTasks();
-    }
-
-    async function toggleTask(id, enabled) {
-        await fetch(API + '/tasks/' + id, {
-            method: 'PUT',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({enabled})
-        });
-        await loadTasks();
-    }
-
-    async function deleteTask(id) {
-        await fetch(API + '/tasks/' + id, {method: 'DELETE'});
-        await loadTasks();
-    }
-
-    async function loadLogs() {
-        let res = await fetch(API + '/logs');
-        let data = await res.json();
-        let textarea = document.getElementById('logs');
-        textarea.value = data.lines.join('');
-        textarea.scrollTop = textarea.scrollHeight;
-    }
-
-    async function tick() {
-        await updateStatus();
-        await loadTasks();
-        await loadLogs();
-    }
-
-    setInterval(tick, 5000);
-    tick();
-</script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 <script src="script.js"></script>
 
 </body>
 </html>
+
