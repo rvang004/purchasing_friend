@@ -1,283 +1,285 @@
-import json
-import uuid
-import webbrowser
-from datetime import datetime
-from pathlib import Path
-from typing import Optional, List
-
-from fastapi import FastAPI, Form, Request, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
-from apscheduler.schedulers.background import BackgroundScheduler
-import asyncio
-import uvicorn
-
-from utils import CredentialManager
-
-app = FastAPI()
-templates = Jinja2Templates(directory="templates")
-cred_manager = CredentialManager()
-
-CONFIG_FILE = Path("config.json")
-
-# ───────────────────────────────── helpers ────────────────────────────────────
-
-def load_config() -> dict:
-    if not CONFIG_FILE.exists():
-        return {"accounts": [], "tasks": []}
-    with open(CONFIG_FILE, "r") as f:
-        return json.load(f)
-
-
-def save_config(cfg: dict):
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(cfg, f, indent=4)
-
-
-# ──────────────────────────────── models ──────────────────────────────────────
-
-class TaskCreate(BaseModel):
-    retailer: str
-    product_url: str
-
-    account_label: str
-    login_email: str
-    login_password: str
-
-    hour: int
-    minute: int
-    second: int
-    ampm: str          # "AM" or "PM"
-    timezone: str      # "CST", "EST", "PST", "MST"
-
-    desired_quantity: int
-    max_quantity: int
-    max_price: float
-    max_spend: float
-
-    enabled: bool
-
-
-class Task(TaskCreate):
-    id: str
-    last_run: Optional[str] = None  # ISO string
-
-
-# ──────────────────────────────── logging ─────────────────────────────────────
-
-log_messages: List[str] = []
-
-
-def log(message: str):
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    entry = f"[{ts}] {message}"
-    log_messages.append(entry)
-    # keep last 500 lines
-    if len(log_messages) > 500:
-        del log_messages[0:len(log_messages) - 500]
-
-
-# ───────────────────────────── scheduler state ────────────────────────────────
-
-scheduler = BackgroundScheduler()
-scheduler.start()
-scheduler_running = False
-
-
-def _task_time_matches(now: datetime, t: dict) -> bool:
-    try:
-        hour = int(t.get("hour", 0))
-        minute = int(t.get("minute", 0))
-        second = int(t.get("second", 0))
-        ampm = t.get("ampm", "AM").upper()
-    except Exception:
-        return False
-
-    if ampm == "PM" and hour != 12:
-        hour_24 = hour + 12
-    elif ampm == "AM" and hour == 12:
-        hour_24 = 0
-    else:
-        hour_24 = hour
-
-    return (
-        now.hour == hour_24
-        and now.minute == minute
-        and now.second == second
-    )
-
-
-def run_due_tasks():
-    cfg = load_config()
-    tasks = cfg.get("tasks", [])
-    now = datetime.now()
-
-    for t in tasks:
-        if not t.get("enabled", False):
-            continue
-
-        if _task_time_matches(now, t):
-            log(f"Running task {t.get('id')} for {t.get('retailer')} {t.get('product_url')}")
-            t["last_run"] = now.isoformat()
-
-    cfg["tasks"] = tasks
-    save_config(cfg)
-
-
-def start_scheduler():
-    global scheduler_running
-    if not scheduler_running:
-        scheduler.add_job(run_due_tasks, "interval", seconds=5, id="task_runner", replace_existing=True)
-        scheduler_running = True
-        log("Scheduler started")
-
-
-def stop_scheduler():
-    global scheduler_running
-    if scheduler_running:
-        try:
-            scheduler.remove_job("task_runner")
-        except Exception:
-            pass
-        scheduler_running = False
-        log("Scheduler stopped")
-
-
-# ──────────────────────────────── routes: html ────────────────────────────────
-
-@app.get("/", response_class=HTMLResponse)
-def index(request: Request):
-    cfg = load_config()
-    return templates.TemplateResponse(
-        "index.html",
-        {"request": request, "accounts": cfg.get("accounts", [])}
-    )
-
-
-# ──────────────────────────────── routes: accounts ────────────────────────────
-
-@app.post("/accounts/add")
-def add_account(
-    label: str = Form(...),
-    email: str = Form(...),
-    password: str = Form(...)
-):
-    cfg = load_config()
-    accounts = cfg.get("accounts", [])
-
-    accounts.append({
-        "id": str(uuid.uuid4()),
-        "label": label,
-        "email": email,
-        "password": cred_manager.encrypt(password)
-    })
-
-    cfg["accounts"] = accounts
-    save_config(cfg)
-
-    return RedirectResponse("/", status_code=303)
-
-
-@app.post("/accounts/delete")
-def delete_account(account_id: str = Form(...)):
-    cfg = load_config()
-    accounts = cfg.get("accounts", [])
-    accounts = [a for a in accounts if a["id"] != account_id]
-    cfg["accounts"] = accounts
-    save_config(cfg)
-    return RedirectResponse("/", status_code=303)
-
-
-@app.post("/accounts/toggle-price-limit")
-def toggle_price_limit(account_id: str = Form(...)):
-    cfg = load_config()
-    accounts = cfg.get("accounts", [])
-
-    for acc in accounts:
-        if acc["id"] == account_id:
-            acc["price_limit_enabled"] = not acc.get("price_limit_enabled", False)
-
-    cfg["accounts"] = accounts
-    save_config(cfg)
-    return RedirectResponse("/", status_code=303)
-
-
-@app.get("/accounts/list")
-def api_accounts_list():
-    cfg = load_config()
-    return cfg.get("accounts", [])
-
-
-# ──────────────────────────────── routes: tasks api ───────────────────────────
-
-@app.get("/tasks", response_model=List[Task])
-def api_list_tasks():
-    cfg = load_config()
-    tasks = cfg.get("tasks", [])
-    result = []
-    for t in tasks:
-        try:
-            result.append(Task(**t))
-        except Exception:
-            continue
-    return result
-
-
-@app.post("/tasks/add", response_model=Task)
-def api_add_task(body: TaskCreate):
-    cfg = load_config()
-    tasks = cfg.get("tasks", [])
-
-    task_id = str(uuid.uuid4())
-    task = Task(id=task_id, last_run=None, **body.dict())
-
-    tasks.append(task.dict())
-    cfg["tasks"] = tasks
-    save_config(cfg)
-
-    log(f"Task created: {task_id} ({body.retailer})")
-    return task
-
-
-@app.post("/tasks/update", response_model=Task)
-def api_update_task(task_id: str, body: TaskCreate):
-    cfg = load_config()
-    tasks = cfg.get("tasks", [])
-
-    for i, t in enumerate(tasks):
-        if t.get("id") == task_id:
-            last_run = t.get("last_run")
-            updated = Task(id=task_id, last_run=last_run, **body.dict())
-            tasks[i] = updated.dict()
-            cfg["tasks"] = tasks
-            save_config(cfg)
-            log(f"Task updated: {task_id}")
-            return updated
-
-    raise HTTPException(status_code=404, detail="Task not found")
-
-
-@app.post("/tasks/delete")
-def api_delete_task(task_id: str):
-    cfg = load_config()
-    tasks = cfg.get("tasks", [])
-
-    tasks = [t for t in tasks if t.get("id") != task_id]
-    cfg["tasks"] = tasks
-    save_config(cfg)
-
-    log(f"Task deleted: {task_id}")
-    return {"status": "deleted"}
-
-
-# ──────────────────────────────── routes: scheduler api ───────────────────────
-
-@app.post("/scheduler/start")
-def api_scheduler_start():
-    start_scheduler()
-    return {"status": "running"}
-
-
-@app.post("/scheduler/stop")
-def api_scheduler
+const API_BASE = "http://127.0.0.1:8000";
+
+let taskModal;
+let logSocket = null;
+
+// ───────────────────────────── init ─────────────────────────────
+
+document.addEventListener("DOMContentLoaded", () => {
+    taskModal = new bootstrap.Modal(document.getElementById("taskModal"));
+
+    loadAccountsDropdown();
+    loadAccountsTable();
+    loadTasks();
+    refreshSchedulerStatus();
+    refreshSystemStatus();
+    connectLogsWebSocket();
+
+    setInterval(() => {
+        loadTasks();
+        refreshSchedulerStatus();
+        refreshSystemStatus();
+    }, 10000);
+});
+
+// ───────────────────────────── tasks ────────────────────────────
+
+async function loadTasks() {
+    const res = await fetch(`${API_BASE}/tasks`);
+    const tasks = await res.json();
+
+    const filterAccount = document.getElementById("accountFilter").value;
+    const tbody = document.getElementById("taskTableBody");
+    tbody.innerHTML = "";
+
+    tasks
+        .filter(t => !filterAccount || t.account_label === filterAccount)
+        .forEach(task => {
+            const timeStr = `${task.hour}:${String(task.minute).padStart(2, "0")}:${String(task.second).padStart(2, "0")} ${task.ampm}`;
+            const enabledBadge = task.enabled
+                ? '<span class="badge bg-success">Yes</span>'
+                : '<span class="badge bg-secondary">No</span>';
+
+            const lastRun = task.last_run ? new Date(task.last_run).toLocaleString() : "Never";
+
+            const row = document.createElement("tr");
+            row.innerHTML = `
+                <td>${task.retailer}</td>
+                <td><a href="${task.product_url}" target="_blank">Link</a></td>
+                <td>${task.account_label}</td>
+                <td>${timeStr}</td>
+                <td>${task.timezone}</td>
+                <td>${task.desired_quantity}</td>
+                <td>${task.max_quantity}</td>
+                <td>${task.max_price}</td>
+                <td>${task.max_spend}</td>
+                <td>${enabledBadge}</td>
+                <td>${lastRun}</td>
+                <td>
+                    <button class="btn btn-sm btn-warning me-1" onclick='editTask(${JSON.stringify(task)})'>Edit</button>
+                    <button class="btn btn-sm btn-danger" onclick="deleteTask('${task.id}')">Delete</button>
+                </td>
+            `;
+            tbody.appendChild(row);
+        });
+}
+
+function openTaskModal() {
+    document.getElementById("taskId").value = "";
+
+    document.getElementById("retailer").value = "Walmart";
+    document.getElementById("productUrl").value = "";
+    document.getElementById("accountLabel").value = "";
+    document.getElementById("loginEmail").value = "";
+    document.getElementById("loginPassword").value = "";
+
+    document.getElementById("hour").value = "";
+    document.getElementById("minute").value = "";
+    document.getElementById("second").value = "";
+    document.getElementById("ampm").value = "AM";
+    document.getElementById("timezone").value = "CST";
+
+    document.getElementById("desiredQty").value = "";
+    document.getElementById("maxQty").value = "";
+    document.getElementById("maxPrice").value = "";
+    document.getElementById("maxSpend").value = "";
+    document.getElementById("enabled").value = "true";
+
+    taskModal.show();
+}
+
+function editTask(task) {
+    document.getElementById("taskId").value = task.id;
+
+    document.getElementById("retailer").value = task.retailer;
+    document.getElementById("productUrl").value = task.product_url;
+    document.getElementById("accountLabel").value = task.account_label;
+    document.getElementById("loginEmail").value = task.login_email;
+    document.getElementById("loginPassword").value = task.login_password;
+
+    document.getElementById("hour").value = task.hour;
+    document.getElementById("minute").value = task.minute;
+    document.getElementById("second").value = task.second;
+    document.getElementById("ampm").value = task.ampm;
+    document.getElementById("timezone").value = task.timezone;
+
+    document.getElementById("desiredQty").value = task.desired_quantity;
+    document.getElementById("maxQty").value = task.max_quantity;
+    document.getElementById("maxPrice").value = task.max_price;
+    document.getElementById("maxSpend").value = task.max_spend;
+    document.getElementById("enabled").value = task.enabled ? "true" : "false";
+
+    taskModal.show();
+}
+
+async function saveTask() {
+    const id = document.getElementById("taskId").value;
+
+    const payload = {
+        retailer: document.getElementById("retailer").value,
+        product_url: document.getElementById("productUrl").value,
+        account_label: document.getElementById("accountLabel").value,
+        login_email: document.getElementById("loginEmail").value,
+        login_password: document.getElementById("loginPassword").value,
+
+        hour: parseInt(document.getElementById("hour").value || "0"),
+        minute: parseInt(document.getElementById("minute").value || "0"),
+        second: parseInt(document.getElementById("second").value || "0"),
+        ampm: document.getElementById("ampm").value,
+        timezone: document.getElementById("timezone").value,
+
+        desired_quantity: parseInt(document.getElementById("desiredQty").value || "0"),
+        max_quantity: parseInt(document.getElementById("maxQty").value || "0"),
+        max_price: parseFloat(document.getElementById("maxPrice").value || "0"),
+        max_spend: parseFloat(document.getElementById("maxSpend").value || "0"),
+
+        enabled: document.getElementById("enabled").value === "true"
+    };
+
+    const url = id
+        ? `${API_BASE}/tasks/update?task_id=${encodeURIComponent(id)}`
+        : `${API_BASE}/tasks/add`;
+
+    await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    });
+
+    taskModal.hide();
+    loadTasks();
+}
+
+async function deleteTask(id) {
+    if (!confirm("Delete this task?")) return;
+
+    await fetch(`${API_BASE}/tasks/delete?task_id=${encodeURIComponent(id)}`, {
+        method: "POST"
+    });
+
+    loadTasks();
+}
+
+// ───────────────────────────── accounts ─────────────────────────
+
+async function loadAccountsDropdown() {
+    const res = await fetch(`${API_BASE}/accounts/list`);
+    const accounts = await res.json();
+
+    const select = document.getElementById("accountFilter");
+    select.innerHTML = `<option value="">All accounts</option>`;
+    accounts.forEach(acc => {
+        const opt = document.createElement("option");
+        opt.value = acc.label;
+        opt.textContent = acc.label;
+        select.appendChild(opt);
+    });
+}
+
+async function loadAccountsTable() {
+    const res = await fetch(`${API_BASE}/accounts/list`);
+    const accounts = await res.json();
+
+    const tbody = document.getElementById("accountsTableBody");
+    tbody.innerHTML = "";
+    accounts.forEach(acc => {
+        const row = document.createElement("tr");
+        row.innerHTML = `
+            <td>${acc.label}</td>
+            <td>${acc.email}</td>
+        `;
+        tbody.appendChild(row);
+    });
+}
+
+// ───────────────────────────── scheduler ────────────────────────
+
+async function startScheduler() {
+    await fetch(`${API_BASE}/scheduler/start`, { method: "POST" });
+    refreshSchedulerStatus();
+    refreshSystemStatus();
+}
+
+async function stopScheduler() {
+    await fetch(`${API_BASE}/scheduler/stop`, { method: "POST" });
+    refreshSchedulerStatus();
+    refreshSystemStatus();
+}
+
+async function refreshSchedulerStatus() {
+    const res = await fetch(`${API_BASE}/scheduler/status`);
+    const data = await res.json();
+
+    const badge = document.getElementById("schedulerStatusBadge");
+    const countSpan = document.getElementById("schedulerTaskCount");
+
+    countSpan.textContent = data.task_count ?? 0;
+
+    if (data.running) {
+        badge.textContent = "Running";
+        badge.className = "badge bg-success";
+    } else {
+        badge.textContent = "Stopped";
+        badge.className = "badge bg-danger";
+    }
+}
+
+// ───────────────────────────── system status ────────────────────
+
+async function refreshSystemStatus() {
+    const res = await fetch(`${API_BASE}/system/status`);
+    const data = await res.json();
+
+    document.getElementById("systemTaskCount").textContent = data.task_count ?? 0;
+    document.getElementById("systemAccountCount").textContent = data.account_count ?? 0;
+
+    const badge = document.getElementById("systemSchedulerBadge");
+    if (data.scheduler_running) {
+        badge.textContent = "Running";
+        badge.className = "badge bg-success";
+    } else {
+        badge.textContent = "Stopped";
+        badge.className = "badge bg-danger";
+    }
+}
+
+// ───────────────────────────── logs / websocket ─────────────────
+
+function connectLogsWebSocket() {
+    const protocol = location.protocol === "https:" ? "wss" : "ws";
+    const wsUrl = `${protocol}://${location.hostname}:8000/logs/stream`;
+
+    try {
+        logSocket = new WebSocket(wsUrl);
+    } catch (e) {
+        appendLogLine("[client] Failed to open WebSocket");
+        return;
+    }
+
+    logSocket.onopen = () => {
+        appendLogLine("[client] Connected to log stream");
+    };
+
+    logSocket.onmessage = (event) => {
+        appendLogLine(event.data);
+    };
+
+    logSocket.onclose = () => {
+        appendLogLine("[client] Log stream closed, retrying in 5s...");
+        setTimeout(connectLogsWebSocket, 5000);
+    };
+
+    logSocket.onerror = () => {
+        appendLogLine("[client] WebSocket error");
+    };
+}
+
+function appendLogLine(text) {
+    const pre = document.getElementById("logConsole");
+    pre.textContent += text + "\n";
+    pre.scrollTop = pre.scrollHeight;
+}
+
+function clearLogs() {
+    document.getElementById("logConsole").textContent = "";
+}
