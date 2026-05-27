@@ -1,0 +1,17 @@
+body {
+    background-color: #121212;
+    color: #e0e0e0;
+}
+
+.nav-tabs .nav-link {
+    color: #ccc;
+}
+
+.nav-tabs .nav-link.active {
+    background-color: #333;
+    color: #fff;
+}
+
+.table-dark td, .table-dark th {
+    vertical-align: middle;
+}
