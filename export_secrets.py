@@ -18,7 +18,7 @@ from pathlib import Path
 def encode_file(path: str) -> str:
     p = Path(path)
     if not p.exists():
-        print(f"⚠️  {path} not found — skipping")
+        print(f"[WARN] {path} not found - skipping")
         return None
     return base64.b64encode(p.read_bytes()).decode()
 
@@ -32,22 +32,22 @@ def main():
 
     missing = [k for k, v in secrets.items() if v is None]
     if missing:
-        print(f"\n❌ Missing files for: {', '.join(missing)}")
+        print(f"\n[ERROR] Missing files for: {', '.join(missing)}")
         print("   Run `python main.py setup` first to create accounts & tasks.\n")
         sys.exit(1)
 
     print("\n" + "=" * 60)
-    print("  GitHub Actions Secrets — copy each value below")
+    print("  GitHub Actions Secrets - copy each value below")
     print("  Destination: github.com/rvang004/purchase-bot")
-    print("  → Settings → Secrets and variables → Actions → New secret")
+    print("  -> Settings -> Secrets and variables -> Actions -> New secret")
     print("=" * 60)
 
     for name, value in secrets.items():
-        print(f"\n🔑 Secret name:  {name}")
+        print(f"\n[KEY] Secret name:  {name}")
         print(f"   Value:\n{value}\n")
 
     print("=" * 60)
-    print("✅ Done! After adding all 3 secrets, push your code and")
+    print("[OK] Done! After adding all 3 secrets, push your code and")
     print("   the bot will run automatically on your cron schedule.")
     print("=" * 60 + "\n")
 

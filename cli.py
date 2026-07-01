@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from utils import CredentialManager
 from datetime import datetime
+from app_paths import CONFIG_FILE, ensure_parent
 
 
 class SetupWizard:
@@ -14,7 +15,7 @@ class SetupWizard:
     def __init__(self):
         self.cred_manager = CredentialManager()
         self.accounts = self.cred_manager.load_credentials()
-        self.config_file = "config.json"
+        self.config_file = CONFIG_FILE
     
     def load_config(self) -> dict:
         """Load purchase tasks config."""
@@ -27,12 +28,12 @@ class SetupWizard:
         """Save purchase tasks config."""
         with open(self.config_file, "w") as f:
             json.dump(config, f, indent=2)
-        print(f"✅ Config saved to {self.config_file}")
+        print(f"[OK] Config saved to {self.config_file}")
     
     def show_menu(self):
         """Display main menu."""
         print("\n" + "="*50)
-        print("🛒 PURCHASE BOT SETUP WIZARD")
+        print("[PURCHASE BOT SETUP WIZARD]")
         print("="*50)
         print("1. Add new account")
         print("2. View accounts")
@@ -50,7 +51,7 @@ class SetupWizard:
         print("  Leave blank to use the default address already saved on the site.")
         use_default = input("  Use site's default address? (yes/no, default yes): ").lower().strip()
         if use_default != "no":
-            print("✅ Will use the site's saved default address at checkout")
+            print("[OK] Will use the site's saved default address at checkout")
             return None
 
         print("  Enter the shipping address to use:")
@@ -67,15 +68,15 @@ class SetupWizard:
 
     def add_account(self):
         """Interactively add a new account."""
-        print("\n📝 ADD NEW ACCOUNT")
+        print("\n[ADD NEW ACCOUNT]")
         
         account_id = input("Account ID (e.g., 'amazon_main'): ").strip()
         if not account_id:
-            print("❌ Account ID cannot be empty")
+            print("[ERROR] Account ID cannot be empty")
             return
         
         if account_id in self.accounts:
-            print(f"❌ Account '{account_id}' already exists")
+            print(f"[ERROR] Account '{account_id}' already exists")
             return
         
         site = input("Website URL (e.g., 'https://www.amazon.com'): ").strip()
@@ -101,13 +102,13 @@ class SetupWizard:
             monthly_limit = float(input("Monthly spending limit ($): "))
         except ValueError:
             monthly_limit = 1000.0
-            print(f"⚠️  Using default monthly limit: ${monthly_limit}")
+            print(f"[WARN] Using default monthly limit: ${monthly_limit}")
         
         try:
             price_limit = float(input("Max price per item/quantity ($): "))
         except ValueError:
             price_limit = 500.0
-            print(f"⚠️  Using default price per item: ${price_limit}")
+            print(f"[WARN] Using default price per item: ${price_limit}")
         
         enable_limit = input("Enable price limit? (yes/no, default yes): ").lower().strip()
         price_limit_enabled = enable_limit != "no"
@@ -117,7 +118,7 @@ class SetupWizard:
             quantity_limit = int(qty_input) if qty_input else None
         except ValueError:
             quantity_limit = None
-            print("⚠️  Invalid quantity — no quantity limit set")
+            print("[WARN] Invalid quantity — no quantity limit set")
 
         shipping_address = self._prompt_shipping_address()
 
@@ -136,17 +137,17 @@ class SetupWizard:
         )
         
         if self.cred_manager.save_credentials(self.accounts):
-            print(f"✅ Account '{account_id}' added successfully!")
+            print(f"[OK] Account '{account_id}' added successfully!")
         else:
-            print("❌ Failed to save account")
+            print("[ERROR] Failed to save account")
     
     def view_accounts(self):
         """Display all accounts (masked)."""
         if not self.accounts:
-            print("\n❌ No accounts found")
+            print("\n[ERROR] No accounts found")
             return
         
-        print("\n📋 YOUR ACCOUNTS")
+        print("\n[YOUR ACCOUNTS]")
         print("-" * 60)
         
         for account_id, account in self.accounts.items():
@@ -156,9 +157,9 @@ class SetupWizard:
             price_enabled = account.get("price_limit_enabled", True)
             spent = account.get("spent_this_month", 0)
             
-            limit_status = "🔐 ON" if price_enabled else "🔓 OFF"
+            limit_status = "[ON]" if price_enabled else "[OFF]"
             
-            print(f"\n🔐 {account_id}")
+            print(f"\n[ACCOUNT] {account_id}")
             print(f"   Site: {account['site']}")
             print(f"   Email: {email_masked}")
             print(f"   Payment: {account['payment_method']}")
@@ -172,41 +173,68 @@ class SetupWizard:
             print(f"   Qty Per Purchase: {qty_display}")
             print(f"   Ship To: {addr_display}")
     
+    def _prompt_window(self) -> tuple[str, str, str | None]:
+        """Collect a schedule window from the user."""
+        start_time = input("Start time (e.g., 20:00 or 8:00 PM): ").strip()
+        end_time = input("End time (e.g., 22:00 or 10:00 PM): ").strip()
+        timezone = input("Timezone (optional, e.g., CST or America/Chicago): ").strip() or None
+        return start_time, end_time, timezone
+
     def add_purchase_task(self):
         """Add a new purchase task."""
-        print("\n📝 ADD PURCHASE TASK")
+        print("\n[ADD PURCHASE TASK]")
         
         if not self.accounts:
-            print("❌ No accounts found. Please add an account first.")
+            print("[ERROR] No accounts found. Please add an account first.")
             return
         
         self.view_accounts()
         account_id = input("\nSelect account ID: ").strip()
         
         if account_id not in self.accounts:
-            print("❌ Account not found")
+            print("[ERROR] Account not found")
             return
         
         product_url = input("Product URL: ").strip()
         
         print("\nSchedule Options:")
-        print("1. Run at specific time (e.g., 14:30)")
-        print("2. Run daily at specific time")
-        print("3. Run on specific days")
-        schedule_choice = input("Select (1-3): ").strip()
-        
+        print("1. Run once at/after a specific time")
+        print("2. Run daily at a specific time")
+        print("3. Run weekly on specific days/time")
+        print("4. Run once within a timeframe")
+        print("5. Run daily within a timeframe")
+        print("6. Run weekly within a timeframe")
+        schedule_choice = input("Select (1-6): ").strip()
+        days = ""
+        timezone = None
+        start_time = None
+        end_time = None
+
         if schedule_choice == "1":
-            run_time = input("Time (HH:MM in 24-hour format): ").strip()
+            run_time = input("Time (e.g., 14:30 or 2:30 PM): ").strip()
             schedule_type = "once"
         elif schedule_choice == "2":
-            run_time = input("Time (HH:MM): ").strip()
+            run_time = input("Time (e.g., 14:30 or 2:30 PM): ").strip()
             schedule_type = "daily"
         elif schedule_choice == "3":
-            run_time = input("Time (HH:MM): ").strip()
+            run_time = input("Time (e.g., 14:30 or 2:30 PM): ").strip()
             days = input("Days (e.g., 'Mon,Wed,Fri'): ").strip()
             schedule_type = "weekly"
+        elif schedule_choice == "4":
+            run_time = ""
+            start_time, end_time, timezone = self._prompt_window()
+            schedule_type = "once_window"
+        elif schedule_choice == "5":
+            run_time = ""
+            start_time, end_time, timezone = self._prompt_window()
+            schedule_type = "daily_window"
+        elif schedule_choice == "6":
+            run_time = ""
+            start_time, end_time, timezone = self._prompt_window()
+            days = input("Days (e.g., 'Mon,Wed,Fri'): ").strip()
+            schedule_type = "weekly_window"
         else:
-            print("❌ Invalid choice")
+            print("[ERROR] Invalid choice")
             return
         
         try:
@@ -228,30 +256,40 @@ class SetupWizard:
             "last_run": None
         }
         
-        if schedule_choice == "3":
+        if schedule_choice in {"3", "6"}:
             task["days"] = days.split(",")
-        
+        if start_time and end_time:
+            task["start_time"] = start_time
+            task["end_time"] = end_time
+        if timezone:
+            task["timezone"] = timezone
+
         config["tasks"].append(task)
         self.save_config(config)
-        print(f"✅ Purchase task '{task['id']}' added!")
+        print(f"[OK] Purchase task '{task['id']}' added!")
     
     def view_tasks(self):
         """Display all purchase tasks."""
         config = self.load_config()
         
         if not config["tasks"]:
-            print("\n❌ No purchase tasks found")
+            print("\n[ERROR] No purchase tasks found")
             return
         
-        print("\n📋 PURCHASE TASKS")
+        print("\n[PURCHASE TASKS]")
         print("-" * 60)
         
         for task in config["tasks"]:
-            status = "✅ Enabled" if task["enabled"] else "❌ Disabled"
-            print(f"\n📌 {task['id']}")
+            status = "[ENABLED]" if task["enabled"] else "[DISABLED]"
+            print(f"\n[TASK] {task['id']}")
             print(f"   Account: {task['account_id']}")
             print(f"   Product: {task['product_url'][:50]}...")
-            print(f"   Schedule: {task['schedule_type']} @ {task['run_time']}")
+            if task.get("start_time") and task.get("end_time"):
+                tz = f" {task.get('timezone')}" if task.get("timezone") else ""
+                schedule = f"{task['schedule_type']} {task['start_time']}–{task['end_time']}{tz}"
+            else:
+                schedule = f"{task['schedule_type']} @ {task['run_time']}"
+            print(f"   Schedule: {schedule}")
             print(f"   Quantity: {task['quantity']}")
             print(f"   Status: {status}")
             print(f"   Last Run: {task['last_run'] or 'Never'}")
@@ -262,14 +300,14 @@ class SetupWizard:
         account_id = input("\nEnter account ID to delete: ").strip()
         
         if account_id not in self.accounts:
-            print("❌ Account not found")
+            print("[ERROR] Account not found")
             return
         
-        confirm = input(f"⚠️  Delete '{account_id}'? (yes/no): ").lower()
+        confirm = input(f"[WARN] Delete '{account_id}'? (yes/no): ").lower()
         if confirm == "yes":
             del self.accounts[account_id]
             if self.cred_manager.save_credentials(self.accounts):
-                print(f"✅ Account '{account_id}' deleted")
+                print(f"[OK] Account '{account_id}' deleted")
     
     def delete_task(self):
         """Delete a purchase task."""
@@ -283,16 +321,16 @@ class SetupWizard:
         
         if len(config["tasks"]) < original_len:
             self.save_config(config)
-            print(f"✅ Task '{task_id}' deleted")
+            print(f"[OK] Task '{task_id}' deleted")
         else:
-            print("❌ Task not found")
+            print("[ERROR] Task not found")
     
     def toggle_price_limit(self):
         """Toggle price limit on/off for an account."""
         self.view_accounts()
         
         if not self.accounts:
-            print("\n❌ No accounts found")
+            print("\n[ERROR] No accounts found")
             return
         
         account_id = input("\nEnter account ID to toggle: ").strip()
@@ -306,10 +344,10 @@ class SetupWizard:
         self.accounts[account_id]["price_limit_enabled"] = new_state
         
         if self.cred_manager.save_credentials(self.accounts):
-            status = "🔓 ENABLED" if new_state else "🔒 DISABLED"
-            print(f"✅ Price limit {status} for {account_id}")
+            status = "[ENABLED]" if new_state else "[DISABLED]"
+            print(f"[OK] Price limit {status} for {account_id}")
         else:
-            print("❌ Failed to update account")
+            print("[ERROR] Failed to update account")
     
     def run(self):
         """Main wizard loop."""
@@ -332,10 +370,10 @@ class SetupWizard:
             elif choice == "7":
                 self.toggle_price_limit()
             elif choice == "8":
-                print("\n👋 Goodbye!")
+                print("\n[OK] Goodbye!")
                 break
             else:
-                print("❌ Invalid option")
+                print("[ERROR] Invalid option")
 
 
 if __name__ == "__main__":

@@ -1,22 +1,37 @@
-# 🛒 Purchase Bot
+# Purchase Bot
 
 A secure, automated e-commerce purchase scheduler. Set it once, run it forever.
 
+Run locally on Windows Task Scheduler, or deploy to the cloud (GitHub Actions + Railway).
+
 **Features:**
-- ✅ Support for multiple e-commerce sites (Amazon, eBay, etc.)
-- ✅ Multiple accounts per site with individual spending limits
-- ✅ Encrypted credential storage (AES encryption via cryptography)
-- ✅ Flexible scheduling (once, daily, weekly)
-- ✅ **Dual-layer price protection** (per-item + monthly limits)
-- ✅ **Toggle price limits** on/off per account
-- ✅ Dry-run mode for testing
-- ✅ Windows Task Scheduler integration
-- ✅ Full logging and error handling
-- ✅ Payment method tracking (card, wallet, store credit)
+- Support for multiple e-commerce sites (Amazon, eBay, etc.)
+- Multiple accounts per site with individual spending limits
+- Encrypted credential storage (AES encryption via cryptography)
+- Flexible scheduling (once, daily, weekly, time windows)
+- Dual-layer price protection (per-item + monthly limits)
+- Toggle price limits on/off per account
+- Dry-run mode for testing
+- Windows Task Scheduler integration
+- Cloud-ready (GitHub Actions + Railway deployment)
+- Full logging and error handling
+- Payment method tracking (card, wallet, store credit)
 
 ---
 
-## 📋 Quick Start
+## Cloud Deployment (NEW!)
+
+Deploy to **GitHub + Railway** for hands-off cloud scheduling:
+
+1. **GitHub:** Host code & secrets securely
+2. **Railway:** Run the bot 24/7 with persistent storage
+3. **GitHub Actions:** Optional cron scheduler (alternative to Railway scheduler)
+
+See **[DEPLOYMENT.md](DEPLOYMENT.md)** for step-by-step cloud setup.
+
+---
+
+## Local Quick Start
 
 ### 1. **Clone & Setup**
 

@@ -30,6 +30,7 @@ wheels/
 # Virtual Environment
 venv/
 env/
+.venv/
 
 # IDE
 .vscode/
@@ -37,9 +38,11 @@ env/
 *.swp
 *.swo
 
-# Logs
+# Logs & local audit data
 logs/
 *.log
+purchase_history.jsonl
+runs/
 
 # Config (keep template, ignore filled)
 config.json

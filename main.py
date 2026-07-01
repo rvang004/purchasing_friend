@@ -8,18 +8,21 @@ import sys
 from pathlib import Path
 from cli import SetupWizard
 from scheduler import PurchaseScheduler
+from app_paths import CONFIG_FILE
 
 
 def main():
     """Main CLI interface."""
     parser = argparse.ArgumentParser(
-        description="🛒 Purchase Bot - Automate e-commerce purchases",
+        description="Purchase Bot - Automate e-commerce purchases",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   python main.py setup          # Interactive setup wizard
   python main.py run            # Start scheduler
-  python main.py run --dry-run  # Test purchases without completing
+  python main.py run --mode review  # Stop before final purchase click
+  python main.py run --mode live    # Fully automated live mode
+  python main.py run --dry-run      # Test without checkout actions
   python main.py run --interval 30  # Check every 30 seconds
         """
     )
@@ -45,7 +48,13 @@ Examples:
     run_parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Simulate purchases without completing them"
+        help="Alias for --mode dry-run"
+    )
+    run_parser.add_argument(
+        "--mode",
+        choices=["dry-run", "review", "live"],
+        default="review",
+        help="Execution mode (default: review)"
     )
     run_parser.add_argument(
         "--interval",
@@ -68,19 +77,20 @@ Examples:
         scheduler = PurchaseScheduler()
         
         # Check if config exists
-        if not Path("config.json").exists():
-            print("❌ No configuration found!")
+        if not CONFIG_FILE.exists():
+            print("No configuration found!")
             print("   Run: python main.py setup")
             sys.exit(1)
         
         # Run scheduler
         try:
             if args.once:
-                asyncio.run(scheduler.run_once(dry_run=args.dry_run))
+                asyncio.run(scheduler.run_once(dry_run=args.dry_run, mode=args.mode))
             else:
                 asyncio.run(scheduler.run_scheduler(
                     interval=args.interval,
-                    dry_run=args.dry_run
+                    dry_run=args.dry_run,
+                    mode=args.mode
                 ))
         except KeyboardInterrupt:
             print("\n👋 Shutting down...")

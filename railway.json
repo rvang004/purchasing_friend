@@ -1,0 +1,13 @@
+name = "purchase-bot"
+description = "Automated e-commerce purchase scheduler"
+
+[build]
+builder = "nixpacks"
+
+[[services]]
+name = "web"
+runtime = "python"
+
+[[services]]
+name = "scheduler"
+runtime = "python"

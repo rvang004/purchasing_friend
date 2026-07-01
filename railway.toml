@@ -1,0 +1,11 @@
+[build]
+builder = "nixpacks"
+
+[build.nixpacks]
+# Install system deps for Playwright (Chromium)
+apt = ["curl", "ca-certificates", "fonts-liberation"]
+
+[[services]]
+name = "web"
+runtime = "python"
+startCommand = "uvicorn server:app --host 0.0.0.0 --port $PORT"
